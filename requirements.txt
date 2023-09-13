@@ -1,0 +1,4 @@
+Flask
+spotipy
+flask_caching
+configparser
