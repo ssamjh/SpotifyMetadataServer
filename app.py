@@ -6,11 +6,15 @@ from flask_caching import Cache
 import configparser
 import webbrowser
 import time
+from threading import Thread, Event
 
 
-def is_token_expired(token_info):
-    now = int(time.time())
-    return token_info['expires_at'] - now < 60
+def token_refresher(stop_event):
+    while not stop_event.is_set():
+        token_info = sp.auth_manager.get_cached_token()
+        if token_info:
+            sp.auth_manager.refresh_access_token(token_info['refresh_token'])
+        time.sleep(300)  # Sleep for 5 minutes
 
 
 app = Flask(__name__)
@@ -42,10 +46,6 @@ def setup():
 @app.route('/current_song', methods=['GET'])
 @cache.cached(timeout=10)
 def current_song():
-    # Check if token is expired or close to expiry and refresh it
-    token_info = sp.auth_manager.get_cached_token()
-    if not token_info or is_token_expired(token_info):
-        sp.auth_manager.refresh_access_token(token_info['refresh_token'])
     try:
         playback_info = sp.current_playback()
 
@@ -132,5 +132,13 @@ def callback():
 stop_server = False
 
 if __name__ == "__main__":
+    stop_event = Event()
+    refresher_thread = Thread(target=token_refresher, args=(stop_event,))
+    refresher_thread.start()
+
     webbrowser.open("http://localhost:8080/setup")
-    app.run(host='0.0.0.0', port=8080)
+    try:
+        app.run(host='0.0.0.0', port=8080)
+    finally:
+        stop_event.set()
+        refresher_thread.join()
