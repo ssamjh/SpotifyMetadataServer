@@ -133,4 +133,4 @@ stop_server = False
 
 if __name__ == "__main__":
     webbrowser.open("http://localhost:8080/setup")
-    app.run(port=8080)
+    app.run(host='0.0.0.0', port=8080)
