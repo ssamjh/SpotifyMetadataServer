@@ -24,13 +24,15 @@ config = configparser.ConfigParser()
 config.read('config.ini')
 client_id = config['SPOTIFY']['CLIENT_ID']
 client_secret = config['SPOTIFY']['CLIENT_SECRET']
+device_name = config['SPOTIFY'].get('DEVICE_NAME', None)
 
 # Spotify API setup
 sp = spotipy.Spotify(auth_manager=SpotifyOAuth(client_id=client_id,
                                                client_secret=client_secret,
                                                redirect_uri="http://localhost:8080/callback",
-                                               scope="user-read-playback-state",
+                                               scope="user-read-playback-state app-remote-control user-modify-playback-state",
                                                cache_path="./token_cache.txt"))
+
 
 # Setup Flask-Caching
 cache = Cache(app, config={'CACHE_TYPE': 'simple'})
@@ -43,15 +45,16 @@ def setup():
     return redirect(auth_url)
 
 
-@app.route('/current_song', methods=['GET'])
+@app.route('/get_metadata', methods=['GET'])
 @cache.cached(timeout=10)
-def current_song():
-    try:
-        playback_info = sp.current_playback()
+def get_metadata():
+    device_name = config.get('SPOTIFY', 'DEVICE_NAME', fallback=None)
+    playback = sp.current_playback()
 
-        # Check if playback_info is None or if the playback is paused/stopped
-        if not playback_info or not playback_info.get('is_playing', False):
-            return jsonify({
+    if device_name and (not playback or playback['device']['name'] != device_name):
+        # If a device name is specified in the config and the current playback is not from that device
+        return jsonify({
+            "current": {
                 "artist": [],
                 "song": "",
                 "album": "",
@@ -59,39 +62,85 @@ def current_song():
                 "albumid": "",
                 "cover": "",
                 "playing": False
-            })
+            },
+            "queue": []
+        })
 
-        # Extracting the metadata
-        track = playback_info.get('item', {})
+    try:
+        queue_data = sp.queue()
+
+        # Extracting the metadata for the currently playing song
+        track = queue_data['currently_playing']
         album = track.get("album", {})
         artists = [{
             "name": artist['name'],
             "id": artist['id']
         } for artist in track.get("artists", [])]
 
-        song_metadata = {
+        current = {
             "artist": artists,
             "song": track.get("name"),
             "album": album.get("name"),
             "songid": track.get("id"),
             "albumid": album.get("id"),
             "cover": next((image['url'] for image in album.get("images", []) if image['height'] == 300), ""),
-            "playing": True
+            "playing": True  # Assuming the currently playing song is always playing
         }
 
-        return jsonify(song_metadata)
+        # Extracting the queue
+        queue = []
+        for item in queue_data.get('queue', [])[:5]:
+            if item:  # Check if the item is not None
+                track = item
+                album = track.get("album", {})
+                artists = [{
+                    "name": artist['name'],
+                    "id": artist['id']
+                } for artist in track.get("artists", [])]
+
+                queue.append({
+                    "artist": artists,
+                    "song": track.get("name"),
+                    "album": album.get("name"),
+                    "songid": track.get("id"),
+                    "albumid": album.get("id"),
+                    "cover": next((image['url'] for image in album.get("images", []) if image['height'] == 300), ""),
+                })
+
+        return jsonify({"current": current, "queue": queue})
 
     except SpotifyException:
         # Return the default empty response if there is any exception (including token issues)
         return jsonify({
-            "artist": [],
-            "song": "",
-            "album": "",
-            "songid": "",
-            "albumid": "",
-            "cover": "",
-            "playing": False
+            "current": {
+                "artist": [],
+                "song": "",
+                "album": "",
+                "songid": "",
+                "albumid": "",
+                "cover": "",
+                "playing": False
+            },
+            "queue": []
         })
+
+
+@app.route('/add_queue', methods=['GET'])
+def add_queue():
+    playback = sp.current_playback()
+    if device_name and (not playback or playback['device']['name'] != device_name):
+        # If a device name is specified in the config and the current playback is not from that device
+        return jsonify({"error": "Music is not playing from the specified device"}), 400
+
+    track_id = request.args.get('trackid')
+    if not track_id:
+        return jsonify({"error": "trackid is required"}), 400
+
+    try:
+        sp.add_to_queue(uri=f"spotify:track:{track_id}")
+        return jsonify({"message": "Song added to the queue successfully!"}), 200
+    except SpotifyException as e:
+        return jsonify({"error": str(e)}), 400
 
 
 @app.route('/callback', methods=['GET'])
