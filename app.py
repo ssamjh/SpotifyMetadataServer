@@ -89,7 +89,7 @@ def get_metadata():
 
         # Extracting the queue
         queue = []
-        for item in queue_data.get('queue', [])[:5]:
+        for item in queue_data.get('queue', [])[:3]:
             if item:  # Check if the item is not None
                 track = item
                 album = track.get("album", {})
@@ -104,7 +104,7 @@ def get_metadata():
                     "album": album.get("name"),
                     "songid": track.get("id"),
                     "albumid": album.get("id"),
-                    "cover": next((image['url'] for image in album.get("images", []) if image['height'] == 300), ""),
+                    "cover": next((image['url'] for image in album.get("images", []) if image['height'] == 64), ""),
                 })
 
         return jsonify({"current": current, "queue": queue})
