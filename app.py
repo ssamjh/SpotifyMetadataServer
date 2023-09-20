@@ -7,6 +7,11 @@ import configparser
 import webbrowser
 import time
 from threading import Thread, Event
+import logging
+
+# Set logging level for Werkzeug (Flask's server) to ERROR
+log = logging.getLogger('werkzeug')
+log.setLevel(logging.ERROR)
 
 
 def token_refresher(stop_event):
@@ -46,7 +51,7 @@ def setup():
 
 
 @app.route('/get_metadata', methods=['GET'])
-@cache.cached(timeout=10)
+@cache.cached(timeout=15)
 def get_metadata():
     device_name = config.get('SPOTIFY', 'DEVICE_NAME', fallback=None)
     playback = sp.current_playback()
@@ -68,43 +73,38 @@ def get_metadata():
 
     try:
         queue_data = sp.queue()
-
-        # Extracting the metadata for the currently playing song
         track = queue_data['currently_playing']
-        album = track.get("album", {})
-        artists = [{
-            "name": artist['name'],
-            "id": artist['id']
-        } for artist in track.get("artists", [])]
+        album = track["album"]
 
+        # Extracting the metadata for the currently playing song in a more direct manner
+        artists = [{"name": artist['name'], "id": artist['id']}
+                   for artist in track["artists"]]
         current = {
             "artist": artists,
-            "song": track.get("name"),
-            "album": album.get("name"),
-            "songid": track.get("id"),
-            "albumid": album.get("id"),
-            "cover": next((image['url'] for image in album.get("images", []) if image['height'] == 300), ""),
+            "song": track["name"],
+            "album": album["name"],
+            "songid": track["id"],
+            "albumid": album["id"],
+            "cover": next((image['url'] for image in album["images"] if image['height'] == 300), ""),
             "playing": True  # Assuming the currently playing song is always playing
         }
 
-        # Extracting the queue
+        # Extracting the queue in a single loop
         queue = []
         for item in queue_data.get('queue', [])[:3]:
-            if item:  # Check if the item is not None
+            if item:
                 track = item
-                album = track.get("album", {})
-                artists = [{
-                    "name": artist['name'],
-                    "id": artist['id']
-                } for artist in track.get("artists", [])]
+                album = track["album"]
+                artists = [{"name": artist['name'], "id": artist['id']}
+                           for artist in track["artists"]]
 
                 queue.append({
                     "artist": artists,
-                    "song": track.get("name"),
-                    "album": album.get("name"),
-                    "songid": track.get("id"),
-                    "albumid": album.get("id"),
-                    "cover": next((image['url'] for image in album.get("images", []) if image['height'] == 64), ""),
+                    "song": track["name"],
+                    "album": album["name"],
+                    "songid": track["id"],
+                    "albumid": album["id"],
+                    "cover": next((image['url'] for image in album["images"] if image['height'] == 64), ""),
                 })
 
         return jsonify({"current": current, "queue": queue})
