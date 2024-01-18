@@ -67,16 +67,14 @@ def get_metadata():
                 "albumid": "",
                 "cover": "",
                 "playing": False
-            },
-            "queue": []
+            }
         })
 
     try:
-        queue_data = sp.queue()
-        track = queue_data['currently_playing']
+        track = playback['item']
         album = track["album"]
 
-        # Extracting the metadata for the currently playing song in a more direct manner
+        # Extracting the metadata for the currently playing song
         artists = [{"name": artist['name'], "id": artist['id']}
                    for artist in track["artists"]]
         current = {
@@ -86,28 +84,10 @@ def get_metadata():
             "songid": track["id"],
             "albumid": album["id"],
             "cover": next((image['url'] for image in album["images"] if image['height'] == 300), ""),
-            "playing": True  # Assuming the currently playing song is always playing
+            "playing": playback['is_playing']
         }
 
-        # Extracting the queue in a single loop
-        queue = []
-        for item in queue_data.get('queue', [])[:3]:
-            if item:
-                track = item
-                album = track["album"]
-                artists = [{"name": artist['name'], "id": artist['id']}
-                           for artist in track["artists"]]
-
-                queue.append({
-                    "artist": artists,
-                    "song": track["name"],
-                    "album": album["name"],
-                    "songid": track["id"],
-                    "albumid": album["id"],
-                    "cover": next((image['url'] for image in album["images"] if image['height'] == 64), ""),
-                })
-
-        return jsonify({"current": current, "queue": queue})
+        return jsonify({"current": current})
 
     except SpotifyException:
         # Return the default empty response if there is any exception (including token issues)
@@ -120,8 +100,7 @@ def get_metadata():
                 "albumid": "",
                 "cover": "",
                 "playing": False
-            },
-            "queue": []
+            }
         })
 
 
