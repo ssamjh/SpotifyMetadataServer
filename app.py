@@ -139,7 +139,7 @@ def callback():
     response_message = ""
 
     if code:
-        sp.auth_manager.get_access_token(code)
+        token_info = sp.auth_manager.get_access_token(code, as_dict=False)
         response_message = (
             "Authentication successful! This window will close in 10 seconds."
         )
