@@ -10,7 +10,7 @@ from threading import Thread, Event
 import logging
 
 # Set logging level for Werkzeug (Flask's server) to ERROR
-log = logging.getLogger('werkzeug')
+log = logging.getLogger("werkzeug")
 log.setLevel(logging.ERROR)
 
 
@@ -18,7 +18,7 @@ def token_refresher(stop_event):
     while not stop_event.is_set():
         token_info = sp.auth_manager.get_cached_token()
         if token_info:
-            sp.auth_manager.refresh_access_token(token_info['refresh_token'])
+            sp.auth_manager.refresh_access_token(token_info["refresh_token"])
         time.sleep(300)  # Sleep for 5 minutes
 
 
@@ -26,92 +26,103 @@ app = Flask(__name__)
 
 # Read configuration from config.ini
 config = configparser.ConfigParser()
-config.read('config.ini')
-client_id = config['SPOTIFY']['CLIENT_ID']
-client_secret = config['SPOTIFY']['CLIENT_SECRET']
-device_name = config['SPOTIFY'].get('DEVICE_NAME', None)
+config.read("config.ini")
+client_id = config["SPOTIFY"]["CLIENT_ID"]
+client_secret = config["SPOTIFY"]["CLIENT_SECRET"]
+device_name = config["SPOTIFY"].get("DEVICE_NAME", None)
 
 # Spotify API setup
-sp = spotipy.Spotify(auth_manager=SpotifyOAuth(client_id=client_id,
-                                               client_secret=client_secret,
-                                               redirect_uri="http://localhost:8080/callback",
-                                               scope="user-read-playback-state app-remote-control user-modify-playback-state",
-                                               cache_path="./token_cache.txt"))
-
+sp = spotipy.Spotify(
+    auth_manager=SpotifyOAuth(
+        client_id=client_id,
+        client_secret=client_secret,
+        redirect_uri="http://localhost:8080/callback",
+        scope="user-read-playback-state app-remote-control user-modify-playback-state",
+        cache_path="./token_cache.txt",
+    )
+)
 
 # Setup Flask-Caching
-cache = Cache(app, config={'CACHE_TYPE': 'simple'})
+cache = Cache(app, config={"CACHE_TYPE": "simple"})
 
 
-@app.route('/setup', methods=['GET'])
+@app.route("/setup", methods=["GET"])
 def setup():
     # Start the Spotify authentication process
     auth_url = sp.auth_manager.get_authorize_url()
     return redirect(auth_url)
 
 
-@app.route('/get_metadata', methods=['GET'])
+@app.route("/get_metadata", methods=["GET"])
 @cache.cached(timeout=15)
 def get_metadata():
-    device_name = config.get('SPOTIFY', 'DEVICE_NAME', fallback=None)
+    device_name = config.get("SPOTIFY", "DEVICE_NAME", fallback=None)
     playback = sp.current_playback()
 
-    if device_name and (not playback or playback['device']['name'] != device_name):
+    if device_name and (not playback or playback["device"]["name"] != device_name):
         # If a device name is specified in the config and the current playback is not from that device
-        return jsonify({
-            "current": {
-                "artist": [],
-                "song": "",
-                "album": "",
-                "songid": "",
-                "albumid": "",
-                "cover": "",
-                "playing": False
+        return jsonify(
+            {
+                "current": {
+                    "artist": [],
+                    "song": "",
+                    "album": "",
+                    "songid": "",
+                    "albumid": "",
+                    "cover": "",
+                    "playing": False,
+                }
             }
-        })
+        )
 
     try:
-        track = playback['item']
+        track = playback["item"]
         album = track["album"]
 
         # Extracting the metadata for the currently playing song
-        artists = [{"name": artist['name'], "id": artist['id']}
-                   for artist in track["artists"]]
+        artists = [
+            {"name": artist["name"], "id": artist["id"]} for artist in track["artists"]
+        ]
         current = {
             "artist": artists,
             "song": track["name"],
             "album": album["name"],
             "songid": track["id"],
             "albumid": album["id"],
-            "cover": next((image['url'] for image in album["images"] if image['height'] == 300), ""),
-            "playing": playback['is_playing']
+            "cover": next(
+                (image["url"] for image in album["images"] if image["height"] == 300),
+                "",
+            ),
+            "playing": playback["is_playing"],
         }
 
         return jsonify({"current": current})
 
     except SpotifyException:
         # Return the default empty response if there is any exception (including token issues)
-        return jsonify({
-            "current": {
-                "artist": [],
-                "song": "",
-                "album": "",
-                "songid": "",
-                "albumid": "",
-                "cover": "",
-                "playing": False
+        return jsonify(
+            {
+                "current": {
+                    "artist": [],
+                    "song": "",
+                    "album": "",
+                    "songid": "",
+                    "albumid": "",
+                    "cover": "",
+                    "playing": False,
+                }
             }
-        })
+        )
 
 
-@app.route('/add_queue', methods=['GET'])
+@app.route("/add_queue", methods=["GET"])
 def add_queue():
     playback = sp.current_playback()
-    if device_name and (not playback or playback['device']['name'] != device_name):
+    if device_name and (not playback or playback["device"]["name"] != device_name):
         # If a device name is specified in the config and the current playback is not from that device
         return jsonify({"error": "Music is not playing from the specified device"}), 400
 
-    track_id = request.args.get('trackid')
+    track_id = request.args.get("trackid")
     if not track_id:
         return jsonify({"error": "trackid is required"}), 400
 
@@ -122,21 +133,16 @@ def add_queue():
         return jsonify({"error": str(e)}), 400
 
 
-@app.route('/callback', methods=['GET'])
+@app.route("/callback", methods=["GET"])
 def callback():
-    code = request.args.get('code')
+    code = request.args.get("code")
     response_message = ""
 
     if code:
-        token_info = sp.auth_manager.get_access_token(code)
-        if token_info:
-            # Manually save the expires_at to the token info
-            token_info['expires_at'] = int(
-                time.time()) + token_info['expires_in']
-            sp.auth_manager._save_token_info(token_info)
-            response_message = "Authentication successful! This window will close in 10 seconds."
-        else:
-            response_message = "Error during authentication."
+        sp.auth_manager.get_access_token(code)
+        response_message = (
+            "Authentication successful! This window will close in 10 seconds."
+        )
     else:
         response_message = "Error during authentication."
 
@@ -166,7 +172,7 @@ if __name__ == "__main__":
 
     webbrowser.open("http://localhost:8080/setup")
     try:
-        app.run(host='0.0.0.0', port=8080)
+        app.run(host="0.0.0.0", port=8080)
     finally:
         stop_event.set()
         refresher_thread.join()
