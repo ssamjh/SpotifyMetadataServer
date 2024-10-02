@@ -54,7 +54,6 @@ def setup():
 
 
 @app.route("/metadata", methods=["GET"])
-@cache.cached(timeout=15)
 def get_metadata():
     device_name = config.get("SPOTIFY", "DEVICE_NAME", fallback=None)
     playback = sp.current_playback()
