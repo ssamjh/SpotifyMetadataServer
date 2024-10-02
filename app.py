@@ -187,30 +187,30 @@ def skip_track():
         return jsonify({"message": "Skipped to next track"}), 200
     except SpotifyException as e:
         return jsonify({"error": str(e)}), 400
-        
+
+
 @app.route("/trackinfo", methods=["GET"])
 def get_track_info():
     track_id = request.args.get("trackid")
     if not track_id:
         return jsonify({"error": "trackid is required"}), 400
-
     try:
         track = sp.track(track_id)
-        
-        artists = [{"id": artist["id"], "name": artist["name"]} for artist in track["artists"]]
+        artists = [
+            {"id": artist["id"], "name": artist["name"]} for artist in track["artists"]
+        ]
         album = track["album"]
-        
         track_info = {
-            "current": {
-                "song": track["name"],
-                "songid": track["id"],
-                "artist": artists,
-                "album": album["name"],
-                "albumid": album["id"],
-                "cover": next((image["url"] for image in album["images"] if image["height"] == 300), "")
-            }
+            "song": track["name"],
+            "songid": track["id"],
+            "artist": artists,
+            "album": album["name"],
+            "albumid": album["id"],
+            "cover": next(
+                (image["url"] for image in album["images"] if image["height"] == 300),
+                "",
+            ),
         }
-        
         return jsonify(track_info), 200
     except SpotifyException as e:
         return jsonify({"error": str(e)}), 400
