@@ -53,7 +53,7 @@ def setup():
     return redirect(auth_url)
 
 
-@app.route("/get_metadata", methods=["GET"])
+@app.route("/metadata", methods=["GET"])
 @cache.cached(timeout=15)
 def get_metadata():
     device_name = config.get("SPOTIFY", "DEVICE_NAME", fallback=None)
@@ -115,7 +115,7 @@ def get_metadata():
         )
 
 
-@app.route("/add_queue", methods=["GET"])
+@app.route("/add", methods=["GET"])
 def add_queue():
     playback = sp.current_playback()
     if device_name and (not playback or playback["device"]["name"] != device_name):
@@ -129,6 +129,63 @@ def add_queue():
     try:
         sp.add_to_queue(uri=f"spotify:track:{track_id}")
         return jsonify({"message": "Song added to the queue successfully!"}), 200
+    except SpotifyException as e:
+        return jsonify({"error": str(e)}), 400
+
+
+@app.route("/search", methods=["GET"])
+def search():
+    query = request.args.get("q")
+    if not query:
+        return jsonify({"error": "Search query is required"}), 400
+
+    try:
+        results = sp.search(q=query, type="track", limit=10)
+        tracks = results["tracks"]["items"]
+
+        search_results = []
+        for track in tracks:
+            search_results.append(
+                {
+                    "id": track["id"],
+                    "name": track["name"],
+                    "artist": track["artists"][0]["name"],
+                    "album": track["album"]["name"],
+                    "cover": (
+                        track["album"]["images"][0]["url"]
+                        if track["album"]["images"]
+                        else None
+                    ),
+                }
+            )
+
+        return jsonify({"results": search_results}), 200
+    except SpotifyException as e:
+        return jsonify({"error": str(e)}), 400
+
+
+@app.route("/skip", methods=["POST"])
+def skip_track():
+    try:
+        playback = sp.current_playback()
+        if not playback:
+            return jsonify({"error": "No active playback found"}), 400
+
+        config_device_name = config.get("SPOTIFY", "DEVICE_NAME", fallback=None)
+        current_device_name = playback["device"]["name"]
+
+        if config_device_name and current_device_name != config_device_name:
+            return (
+                jsonify(
+                    {
+                        "error": f"Music is not playing from the specified device ({config_device_name})"
+                    }
+                ),
+                400,
+            )
+
+        sp.next_track()
+        return jsonify({"message": "Skipped to next track"}), 200
     except SpotifyException as e:
         return jsonify({"error": str(e)}), 400
 
