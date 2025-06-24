@@ -8,10 +8,53 @@ import webbrowser
 import time
 from threading import Thread, Event
 import logging
+import requests
+from concurrent.futures import ThreadPoolExecutor, TimeoutError
+import functools
 
 # Set logging level for Werkzeug (Flask's server) to ERROR
 log = logging.getLogger("werkzeug")
 log.setLevel(logging.ERROR)
+
+# Create a thread pool for timeout operations
+executor = ThreadPoolExecutor(max_workers=10)
+
+
+def with_timeout(timeout_seconds=1.0):
+    """Decorator to add timeout to functions"""
+
+    def decorator(func):
+        @functools.wraps(func)
+        def wrapper(*args, **kwargs):
+            future = executor.submit(func, *args, **kwargs)
+            try:
+                return future.result(timeout=timeout_seconds)
+            except TimeoutError:
+                print(
+                    f"Function {func.__name__} timed out after {timeout_seconds} seconds"
+                )
+                return None
+            except Exception as e:
+                print(f"Error in {func.__name__}: {e}")
+                return None
+
+        return wrapper
+
+    return decorator
+
+
+def get_current_playback_safe():
+    """Safely get current playback with timeout"""
+    try:
+
+        @with_timeout(1.0)  # 1 second timeout
+        def _get_playback():
+            return sp.current_playback()
+
+        return _get_playback()
+    except Exception as e:
+        print(f"Error getting playback: {e}")
+        return None
 
 
 def token_refresher(stop_event):
@@ -37,7 +80,7 @@ def token_refresher(stop_event):
                                     token_info["refresh_token"]
                                 )
                                 print("Token refreshed successfully")
-                            except Exception as e:
+                            except (Exception, requests.exceptions.Timeout) as e:
                                 print(f"Error refreshing token: {e}")
                                 # Don't crash the thread on refresh errors
                                 pass
@@ -58,7 +101,8 @@ client_id = config["SPOTIFY"]["CLIENT_ID"]
 client_secret = config["SPOTIFY"]["CLIENT_SECRET"]
 device_name = config["SPOTIFY"].get("DEVICE_NAME", None)
 
-# Spotify API setup
+# Spotify API setup with timeout
+# requests_timeout=0.5 means all API calls will timeout after 500ms
 sp = spotipy.Spotify(
     auth_manager=SpotifyOAuth(
         client_id=client_id,
@@ -66,11 +110,16 @@ sp = spotipy.Spotify(
         redirect_uri="http://127.0.0.1:8080/callback",
         scope="user-read-playback-state app-remote-control user-modify-playback-state",
         cache_path="./token_cache.txt",
-    )
+    ),
+    requests_timeout=0.5,  # 500ms timeout for all requests
 )
 
 # Setup Flask-Caching
 cache = Cache(app, config={"CACHE_TYPE": "simple"})
+
+# Global variables for thread management
+refresher_thread = None
+stop_event = Event()
 
 
 @app.route("/setup", methods=["GET"])
@@ -83,7 +132,29 @@ def setup():
 @app.route("/metadata", methods=["GET"])
 def get_metadata():
     device_name = config.get("SPOTIFY", "DEVICE_NAME", fallback=None)
-    playback = sp.current_playback()
+
+    try:
+        playback = sp.current_playback()
+    except (
+        SpotifyException,
+        requests.exceptions.Timeout,
+        requests.exceptions.ConnectionError,
+    ) as e:
+        print(f"Error getting playback: {e}")
+        # Return empty response on timeout or connection error
+        return jsonify(
+            {
+                "current": {
+                    "artist": [],
+                    "song": "",
+                    "album": "",
+                    "songid": "",
+                    "albumid": "",
+                    "cover": "",
+                    "playing": False,
+                }
+            }
+        )
 
     if device_name and (not playback or playback["device"]["name"] != device_name):
         # If a device name is specified in the config and the current playback is not from that device
@@ -124,7 +195,7 @@ def get_metadata():
 
         return jsonify({"current": current})
 
-    except SpotifyException:
+    except (SpotifyException, AttributeError, TypeError, KeyError):
         # Return the default empty response if there is any exception (including token issues)
         return jsonify(
             {
@@ -143,7 +214,15 @@ def get_metadata():
 
 @app.route("/add", methods=["GET"])
 def add_queue():
-    playback = sp.current_playback()
+    try:
+        playback = sp.current_playback()
+    except (
+        SpotifyException,
+        requests.exceptions.Timeout,
+        requests.exceptions.ConnectionError,
+    ) as e:
+        return jsonify({"error": f"Failed to get playback state: {str(e)}"}), 500
+
     if device_name and (not playback or playback["device"]["name"] != device_name):
         # If a device name is specified in the config and the current playback is not from that device
         return jsonify({"error": "Music is not playing from the specified device"}), 400
@@ -155,7 +234,11 @@ def add_queue():
     try:
         sp.add_to_queue(uri=f"spotify:track:{track_id}")
         return jsonify({"message": "Song added to the queue successfully!"}), 200
-    except SpotifyException as e:
+    except (
+        SpotifyException,
+        requests.exceptions.Timeout,
+        requests.exceptions.ConnectionError,
+    ) as e:
         return jsonify({"error": str(e)}), 400
 
 
@@ -186,7 +269,11 @@ def search():
             )
 
         return jsonify({"results": search_results}), 200
-    except SpotifyException as e:
+    except (
+        SpotifyException,
+        requests.exceptions.Timeout,
+        requests.exceptions.ConnectionError,
+    ) as e:
         return jsonify({"error": str(e)}), 400
 
 
@@ -212,7 +299,11 @@ def skip_track():
 
         sp.next_track()
         return jsonify({"message": "Skipped to next track"}), 200
-    except SpotifyException as e:
+    except (
+        SpotifyException,
+        requests.exceptions.Timeout,
+        requests.exceptions.ConnectionError,
+    ) as e:
         return jsonify({"error": str(e)}), 400
 
 
@@ -239,7 +330,11 @@ def get_track_info():
             ),
         }
         return jsonify(track_info), 200
-    except SpotifyException as e:
+    except (
+        SpotifyException,
+        requests.exceptions.Timeout,
+        requests.exceptions.ConnectionError,
+    ) as e:
         return jsonify({"error": str(e)}), 400
 
 
@@ -249,10 +344,19 @@ def callback():
     response_message = ""
 
     if code:
-        token_info = sp.auth_manager.get_access_token(code, as_dict=False)
-        response_message = (
-            "Authentication successful! This window will close in 10 seconds."
-        )
+        try:
+            token_info = sp.auth_manager.get_access_token(code, as_dict=False)
+            response_message = (
+                "Authentication successful! This window will close in 10 seconds."
+            )
+            # Start the token refresher thread after successful authentication
+            global refresher_thread
+            if not refresher_thread or not refresher_thread.is_alive():
+                refresher_thread = Thread(target=token_refresher, args=(stop_event,))
+                refresher_thread.start()
+                print("Started token refresher thread after authentication")
+        except (Exception, requests.exceptions.Timeout) as e:
+            response_message = f"Error during authentication: {str(e)}"
     else:
         response_message = "Error during authentication."
 
@@ -281,16 +385,56 @@ def auth_status():
             return jsonify({"authenticated": True}), 200
         else:
             return jsonify({"authenticated": False}), 200
-    except:
+    except (Exception, requests.exceptions.Timeout):
         return jsonify({"authenticated": False}), 200
 
 
-stop_server = False
+@app.route("/test", methods=["GET"])
+def test_connection():
+    """Test endpoint to check if Spotify connection works"""
+    start_time = time.time()
+    try:
+        # Try a simple API call with timeout
+        @with_timeout(2.0)
+        def _test_call():
+            return sp.current_user()
+
+        user_info = _test_call()
+        elapsed = time.time() - start_time
+
+        if user_info:
+            return (
+                jsonify(
+                    {
+                        "status": "ok",
+                        "user": user_info.get("display_name", "Unknown"),
+                        "response_time": f"{elapsed:.2f}s",
+                    }
+                ),
+                200,
+            )
+        else:
+            return (
+                jsonify(
+                    {
+                        "status": "timeout",
+                        "error": "API call timed out",
+                        "response_time": f"{elapsed:.2f}s",
+                    }
+                ),
+                500,
+            )
+    except Exception as e:
+        elapsed = time.time() - start_time
+        return (
+            jsonify(
+                {"status": "error", "error": str(e), "response_time": f"{elapsed:.2f}s"}
+            ),
+            500,
+        )
+
 
 if __name__ == "__main__":
-    stop_event = Event()
-    refresher_thread = None
-
     # Check if we already have a valid token
     try:
         token_info = sp.auth_manager.get_cached_token()
@@ -314,3 +458,5 @@ if __name__ == "__main__":
         stop_event.set()
         if refresher_thread and refresher_thread.is_alive():
             refresher_thread.join()
+        # Shutdown the executor
+        executor.shutdown(wait=True)
