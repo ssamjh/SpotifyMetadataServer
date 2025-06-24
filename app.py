@@ -16,9 +16,36 @@ log.setLevel(logging.ERROR)
 
 def token_refresher(stop_event):
     while not stop_event.is_set():
-        token_info = sp.auth_manager.get_cached_token()
-        if token_info:
-            sp.auth_manager.refresh_access_token(token_info["refresh_token"])
+        try:
+            # Check if we have a valid auth manager
+            if hasattr(sp, "auth_manager") and sp.auth_manager:
+                token_info = sp.auth_manager.get_cached_token()
+
+                # Only refresh if we have a valid token with a refresh_token
+                if token_info and "refresh_token" in token_info:
+                    # Check if token needs refreshing (e.g., if it expires in less than 10 minutes)
+                    from datetime import datetime
+
+                    if "expires_at" in token_info:
+                        expires_at = token_info["expires_at"]
+                        now = int(datetime.now().timestamp())
+
+                        # Only refresh if token expires in less than 10 minutes
+                        if expires_at - now < 600:
+                            try:
+                                sp.auth_manager.refresh_access_token(
+                                    token_info["refresh_token"]
+                                )
+                                print("Token refreshed successfully")
+                            except Exception as e:
+                                print(f"Error refreshing token: {e}")
+                                # Don't crash the thread on refresh errors
+                                pass
+
+        except Exception as e:
+            print(f"Error in token refresher: {e}")
+            # Continue running even if there's an error
+
         time.sleep(300)  # Sleep for 5 minutes
 
 
@@ -246,16 +273,44 @@ def callback():
     """
 
 
+@app.route("/auth_status", methods=["GET"])
+def auth_status():
+    try:
+        token_info = sp.auth_manager.get_cached_token()
+        if token_info and not sp.auth_manager.is_token_expired(token_info):
+            return jsonify({"authenticated": True}), 200
+        else:
+            return jsonify({"authenticated": False}), 200
+    except:
+        return jsonify({"authenticated": False}), 200
+
+
 stop_server = False
 
 if __name__ == "__main__":
     stop_event = Event()
-    refresher_thread = Thread(target=token_refresher, args=(stop_event,))
-    refresher_thread.start()
+    refresher_thread = None
 
-    webbrowser.open("http://127.0.0.1:8080/setup")
+    # Check if we already have a valid token
+    try:
+        token_info = sp.auth_manager.get_cached_token()
+        if token_info and not sp.auth_manager.is_token_expired(token_info):
+            # We have a valid token, start the refresher thread
+            refresher_thread = Thread(target=token_refresher, args=(stop_event,))
+            refresher_thread.start()
+            print("Using existing authentication token")
+        else:
+            # Need to authenticate first
+            webbrowser.open("http://127.0.0.1:8080/setup")
+            print("Please authenticate in your browser")
+    except:
+        # No cached token, need to authenticate
+        webbrowser.open("http://127.0.0.1:8080/setup")
+        print("Please authenticate in your browser")
+
     try:
         app.run(host="0.0.0.0", port=8080)
     finally:
         stop_event.set()
-        refresher_thread.join()
+        if refresher_thread and refresher_thread.is_alive():
+            refresher_thread.join()
