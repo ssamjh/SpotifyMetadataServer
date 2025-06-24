@@ -36,7 +36,7 @@ sp = spotipy.Spotify(
     auth_manager=SpotifyOAuth(
         client_id=client_id,
         client_secret=client_secret,
-        redirect_uri="http://localhost:8080/callback",
+        redirect_uri="http://127.0.0.1:8080/callback",
         scope="user-read-playback-state app-remote-control user-modify-playback-state",
         cache_path="./token_cache.txt",
     )
@@ -253,7 +253,7 @@ if __name__ == "__main__":
     refresher_thread = Thread(target=token_refresher, args=(stop_event,))
     refresher_thread.start()
 
-    webbrowser.open("http://localhost:8080/setup")
+    webbrowser.open("http://127.0.0.1:8080/setup")
     try:
         app.run(host="0.0.0.0", port=8080)
     finally:
